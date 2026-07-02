@@ -12,6 +12,7 @@ export type ItemMasterRow = {
   aliases: string[];
   defaultUom?: string;
   conversionQty?: number;
+  uomConversions?: Record<string, number>;
 };
 
 export type ConvertedLine = ExtractedLine & {

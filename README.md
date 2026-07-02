@@ -67,17 +67,11 @@ The imported CSV is converted into the JSON shown in the page:
 
 ## ERPNext setup
 
-ERPNext should remain the source of truth for item codes, UOM, and conversion quantities. Handwritten shorthand logic should live in the app, not as thousands of item aliases.
+ERPNext should remain the source of truth for item codes, stock UOM, and UOM conversion factors. Handwritten shorthand logic should live in the app, not as thousands of item aliases.
 
-### 1. Add custom fields on Item
+### 1. Maintain UOM conversions on Item
 
-In ERPNext, go to **Customize Form** and select **Item**.
-
-Add this field:
-
-| Label | Fieldname | Type | Purpose |
-| --- | --- | --- | --- |
-| Quotation Conversion Qty | `custom_quotation_conversion_qty` | Float | Multiplier from extracted order quantity to ERP quantity |
+No custom conversion field is required if the Item already has UOM conversion rows.
 
 Example:
 
@@ -86,9 +80,25 @@ Example:
 | Item Code | `10105-WH` |
 | Item Name | `10105 WH` |
 | Stock UOM | `Nos` |
-| Quotation Conversion Qty | `300` |
 
-That means once the app resolves a handwritten line to `10105-WH`, quantity `1 CTN` can become `300 Nos`.
+In **Units of Measure** on the Item:
+
+| UOM | Conversion Factor |
+| --- | --- |
+| Nos | `1` |
+| Box | `20` |
+| Carton | `600` |
+
+That means once the app resolves a handwritten line to `10105-WH`:
+
+| Written quantity | ERP quantity |
+| --- | --- |
+| `10 Box` | `200 Nos` |
+| `1 CTN` | `600 Nos` |
+| `1 carton` | `600 Nos` |
+| `1 cartoon` | `600 Nos` |
+
+The app treats `CTN`, `carton`, and `cartoon` as ERPNext UOM `Carton`.
 
 ### Parsing rules live in the app
 
@@ -145,8 +155,9 @@ Fields fetched:
 item_code
 item_name
 stock_uom
-custom_quotation_conversion_qty
 ```
+
+For each item, the app also opens the Item document and reads its `uoms` child table to get conversion factors such as `Box = 20` and `Carton = 600`.
 
 ## Next milestones
 

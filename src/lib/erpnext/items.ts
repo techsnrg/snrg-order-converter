@@ -4,7 +4,10 @@ type ErpNextItem = {
   item_code: string;
   item_name?: string;
   stock_uom?: string;
-  custom_quotation_conversion_qty?: number | string;
+  uoms?: Array<{
+    uom?: string;
+    conversion_factor?: number | string;
+  }>;
 };
 
 type ErpNextListResponse = {
@@ -18,12 +21,7 @@ type ErpNextItemSyncResult = {
 };
 
 const standardItemFields = ["item_code", "item_name", "stock_uom"];
-const customItemFields = [
-  "item_code",
-  "item_name",
-  "stock_uom",
-  "custom_quotation_conversion_qty"
-];
+const itemDetailConcurrency = 4;
 
 function getRequiredEnv(name: string) {
   const value = process.env[name]?.trim();
@@ -44,50 +42,103 @@ function buildItemUrl(limitStart: number, fields: string[]) {
   return url;
 }
 
-function toItemMasterRow(item: ErpNextItem): ItemMasterRow {
+function buildItemDetailUrl(itemCode: string) {
+  return `${getErpNextBaseUrl()}/api/resource/Item/${encodeURIComponent(itemCode)}`;
+}
+
+function buildUomConversions(item: ErpNextItem) {
+  const conversions: Record<string, number> = {};
+
+  for (const row of item.uoms || []) {
+    if (!row.uom) continue;
+    const factor = Number(row.conversion_factor || 1) || 1;
+    conversions[row.uom] = factor;
+  }
+
+  if (!Object.keys(conversions).length) {
+    conversions[item.stock_uom || "Nos"] = 1;
+  }
+
+  return conversions;
+}
+
+function toItemMasterRow(item: ErpNextItem, detail?: ErpNextItem): ItemMasterRow {
+  const source = detail || item;
+
   return {
     itemCode: item.item_code,
     itemName: item.item_name || item.item_code,
     aliases: [item.item_code],
     defaultUom: item.stock_uom || "Nos",
-    conversionQty: Number(item.custom_quotation_conversion_qty || 1) || 1
+    conversionQty: 1,
+    uomConversions: buildUomConversions(source)
   };
 }
 
-function isMissingCustomFieldError(status: number, body: string) {
-  return (
-    status === 417 &&
-    body.includes("custom_quotation_conversion_qty") &&
-    body.includes("Field not permitted in query")
-  );
+function getAuthHeaders() {
+  const apiKey = getRequiredEnv("ERPNEXT_API_KEY");
+  const apiSecret = getRequiredEnv("ERPNEXT_API_SECRET");
+
+  return {
+    Authorization: `token ${apiKey}:${apiSecret}`,
+    Accept: "application/json"
+  };
+}
+
+async function fetchItemDetail(itemCode: string): Promise<ErpNextItem | null> {
+  try {
+    const response = await fetch(buildItemDetailUrl(itemCode), {
+      headers: getAuthHeaders(),
+      cache: "no-store"
+    });
+
+    if (!response.ok) return null;
+
+    const payload = (await response.json()) as { data?: ErpNextItem };
+    return payload.data || null;
+  } catch {
+    return null;
+  }
+}
+
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  mapper: (value: T, index: number) => Promise<R>
+) {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < values.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await mapper(values[currentIndex], currentIndex);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, worker));
+  return results;
 }
 
 async function fetchItemsWithFields(fields: string[]) {
-  const apiKey = getRequiredEnv("ERPNEXT_API_KEY");
-  const apiSecret = getRequiredEnv("ERPNEXT_API_SECRET");
   const items: ItemMasterRow[] = [];
   let limitStart = 0;
 
   while (true) {
     const response = await fetch(buildItemUrl(limitStart, fields), {
-      headers: {
-        Authorization: `token ${apiKey}:${apiSecret}`,
-        Accept: "application/json"
-      },
+      headers: getAuthHeaders(),
       cache: "no-store"
     });
 
     if (!response.ok) {
       const body = await response.text();
-      if (isMissingCustomFieldError(response.status, body)) {
-        throw new Error("MISSING_ITEM_CUSTOM_FIELDS");
-      }
       throw new Error(`ERPNext item sync failed: ${response.status} ${body.slice(0, 200)}`);
     }
 
     const payload = (await response.json()) as ErpNextListResponse;
     const page = payload.data || [];
-    items.push(...page.map(toItemMasterRow));
+    items.push(...page.map((item) => toItemMasterRow(item)));
 
     if (page.length < 500) break;
     limitStart += page.length;
@@ -97,21 +148,23 @@ async function fetchItemsWithFields(fields: string[]) {
 }
 
 export async function fetchErpNextItems(): Promise<ErpNextItemSyncResult> {
-  try {
-    return {
-      items: await fetchItemsWithFields(customItemFields),
-      requiresCustomFieldSetup: false
-    };
-  } catch (error) {
-    if (error instanceof Error && error.message === "MISSING_ITEM_CUSTOM_FIELDS") {
-      return {
-        items: await fetchItemsWithFields(standardItemFields),
-        warning:
-          "ERPNext connection works, but custom_quotation_conversion_qty is missing or not readable. Add it to enable packing/conversion quantities. Item-code matching still works from ERPNext item codes.",
-        requiresCustomFieldSetup: true
-      };
-    }
+  const baseItems = await fetchItemsWithFields(standardItemFields);
+  let failedDetailCount = 0;
 
-    throw error;
-  }
+  const items = await mapWithConcurrency(baseItems, itemDetailConcurrency, async (item) => {
+    const detail = await fetchItemDetail(item.itemCode);
+    if (!detail) failedDetailCount += 1;
+    return {
+      ...item,
+      uomConversions: detail ? buildUomConversions(detail) : item.uomConversions
+    };
+  });
+
+  return {
+    items,
+    warning: failedDetailCount
+      ? `${failedDetailCount} ERPNext item details could not be loaded, so those rows may miss Box/Carton conversion factors.`
+      : undefined,
+    requiresCustomFieldSetup: false
+  };
 }
