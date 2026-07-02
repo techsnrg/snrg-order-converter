@@ -5,11 +5,13 @@ export const runtime = "nodejs";
 
 export async function GET() {
   try {
-    const items = await fetchErpNextItems();
+    const result = await fetchErpNextItems();
     return NextResponse.json({
-      items,
-      count: items.length,
-      syncedAt: new Date().toISOString()
+      items: result.items,
+      count: result.items.length,
+      syncedAt: new Date().toISOString(),
+      warning: result.warning,
+      requiresCustomFieldSetup: result.requiresCustomFieldSetup
     });
   } catch (error) {
     return NextResponse.json(

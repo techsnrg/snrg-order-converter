@@ -12,7 +12,14 @@ type ErpNextListResponse = {
   data?: ErpNextItem[];
 };
 
-const itemFields = [
+type ErpNextItemSyncResult = {
+  items: ItemMasterRow[];
+  warning?: string;
+  requiresCustomFieldSetup: boolean;
+};
+
+const standardItemFields = ["item_code", "item_name", "stock_uom"];
+const customItemFields = [
   "item_code",
   "item_name",
   "stock_uom",
@@ -30,9 +37,9 @@ function getErpNextBaseUrl() {
   return getRequiredEnv("ERPNEXT_BASE_URL").replace(/\/+$/, "");
 }
 
-function buildItemUrl(limitStart: number) {
+function buildItemUrl(limitStart: number, fields: string[]) {
   const url = new URL(`${getErpNextBaseUrl()}/api/resource/Item`);
-  url.searchParams.set("fields", JSON.stringify(itemFields));
+  url.searchParams.set("fields", JSON.stringify(fields));
   url.searchParams.set("filters", JSON.stringify([["disabled", "=", 0]]));
   url.searchParams.set("limit_start", String(limitStart));
   url.searchParams.set("limit_page_length", "500");
@@ -58,14 +65,22 @@ function toItemMasterRow(item: ErpNextItem): ItemMasterRow {
   };
 }
 
-export async function fetchErpNextItems(): Promise<ItemMasterRow[]> {
+function isMissingCustomFieldError(status: number, body: string) {
+  return (
+    status === 417 &&
+    (body.includes("custom_sales_aliases") || body.includes("custom_quotation_conversion_qty")) &&
+    body.includes("Field not permitted in query")
+  );
+}
+
+async function fetchItemsWithFields(fields: string[]) {
   const apiKey = getRequiredEnv("ERPNEXT_API_KEY");
   const apiSecret = getRequiredEnv("ERPNEXT_API_SECRET");
   const items: ItemMasterRow[] = [];
   let limitStart = 0;
 
   while (true) {
-    const response = await fetch(buildItemUrl(limitStart), {
+    const response = await fetch(buildItemUrl(limitStart, fields), {
       headers: {
         Authorization: `token ${apiKey}:${apiSecret}`,
         Accept: "application/json"
@@ -75,6 +90,9 @@ export async function fetchErpNextItems(): Promise<ItemMasterRow[]> {
 
     if (!response.ok) {
       const body = await response.text();
+      if (isMissingCustomFieldError(response.status, body)) {
+        throw new Error("MISSING_ITEM_CUSTOM_FIELDS");
+      }
       throw new Error(`ERPNext item sync failed: ${response.status} ${body.slice(0, 200)}`);
     }
 
@@ -87,4 +105,24 @@ export async function fetchErpNextItems(): Promise<ItemMasterRow[]> {
   }
 
   return items;
+}
+
+export async function fetchErpNextItems(): Promise<ErpNextItemSyncResult> {
+  try {
+    return {
+      items: await fetchItemsWithFields(customItemFields),
+      requiresCustomFieldSetup: false
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === "MISSING_ITEM_CUSTOM_FIELDS") {
+      return {
+        items: await fetchItemsWithFields(standardItemFields),
+        warning:
+          "ERPNext connection works, but Item custom fields are missing or not readable. Add custom_sales_aliases and custom_quotation_conversion_qty to enable alias matching and conversion qty.",
+        requiresCustomFieldSetup: true
+      };
+    }
+
+    throw error;
+  }
 }

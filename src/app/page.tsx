@@ -16,6 +16,8 @@ type ItemSyncResponse = {
   items?: ItemMasterRow[];
   count?: number;
   syncedAt?: string;
+  warning?: string;
+  requiresCustomFieldSetup?: boolean;
   error?: string;
 };
 
@@ -195,7 +197,7 @@ export default function Home() {
       if (!response.ok) throw new Error(data.error || "Could not sync ERPNext items.");
 
       setItemMasterText(JSON.stringify(data.items || [], null, 2));
-      setMessage(`${data.count || 0} active ERPNext items synced.`);
+      setMessage(data.warning || `${data.count || 0} active ERPNext items synced.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not sync ERPNext items.");
     } finally {
