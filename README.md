@@ -24,9 +24,14 @@ Add your OpenAI API key to `.env.local`:
 ```bash
 OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-4.1-mini
+ERPNEXT_BASE_URL=https://your-erpnext-site.com
+ERPNEXT_API_KEY=...
+ERPNEXT_API_SECRET=...
 ```
 
 Without `OPENAI_API_KEY`, the extraction API returns demo rows so the review and Excel export flow can be tested.
+
+Without the ERPNext variables, the **Sync ERPNext** button will show a configuration error. CSV upload remains available as a fallback.
 
 ## Item catalogue
 
@@ -60,9 +65,82 @@ The imported CSV is converted into the JSON shown in the page:
 ]
 ```
 
+## ERPNext setup
+
+ERPNext should remain the source of truth for item codes, UOM, aliases, and conversion quantities.
+
+### 1. Add custom fields on Item
+
+In ERPNext, go to **Customize Form** and select **Item**.
+
+Add these fields:
+
+| Label | Fieldname | Type | Purpose |
+| --- | --- | --- | --- |
+| Sales Aliases | `custom_sales_aliases` | Small Text | Handwritten/sales-team names such as `10105 VB, 10105, 10105-VB` |
+| Quotation Conversion Qty | `custom_quotation_conversion_qty` | Float | Multiplier from extracted order quantity to ERP quantity |
+
+Example:
+
+| ERPNext field | Value |
+| --- | --- |
+| Item Code | `10105-WH` |
+| Item Name | `10105 WH` |
+| Stock UOM | `Nos` |
+| Sales Aliases | `10105 VB, 10105, 10105-VB` |
+| Quotation Conversion Qty | `300` |
+
+That means a handwritten line like `10105 VB - 01 CTN` can become `10105-WH`, quantity `300`, UOM `Nos`.
+
+### 2. Create an API user
+
+Create a dedicated ERPNext user, for example:
+
+```text
+order.converter@yourcompany.com
+```
+
+Give it read access to Item. In many ERPNext setups this can be a role such as **Item Manager**, **Stock User**, or a custom read-only role with Item read permission.
+
+Then open the user and generate:
+
+- API Key
+- API Secret
+
+### 3. Configure the app
+
+Create `.env.local`:
+
+```bash
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4.1-mini
+ERPNEXT_BASE_URL=https://your-erpnext-site.com
+ERPNEXT_API_KEY=your_api_key
+ERPNEXT_API_SECRET=your_api_secret
+```
+
+Restart the dev server after changing `.env.local`.
+
+### 4. Sync items
+
+Open the app and click **Sync ERPNext** in the item catalogue panel. The app will fetch active ERPNext items using:
+
+```text
+GET /api/resource/Item
+```
+
+Fields fetched:
+
+```text
+item_code
+item_name
+stock_uom
+custom_sales_aliases
+custom_quotation_conversion_qty
+```
+
 ## Next milestones
 
 - Add password/email login for coordinators.
-- Sync item master from ERPNext.
 - Store conversion history.
 - Create draft ERPNext quotation through API.

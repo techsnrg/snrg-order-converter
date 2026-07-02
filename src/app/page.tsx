@@ -12,6 +12,13 @@ type ApiResponse = {
   error?: string;
 };
 
+type ItemSyncResponse = {
+  items?: ItemMasterRow[];
+  count?: number;
+  syncedAt?: string;
+  error?: string;
+};
+
 const emptyRows: ConvertedLine[] = [];
 const catalogueHeaders = ["itemCode", "itemName", "aliases", "defaultUom", "conversionQty"];
 
@@ -146,6 +153,7 @@ export default function Home() {
   const [customerName, setCustomerName] = useState("");
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isSyncingItems, setIsSyncingItems] = useState(false);
 
   const reviewCount = useMemo(() => rows.filter((row) => row.needsReview).length, [rows]);
 
@@ -174,6 +182,24 @@ export default function Home() {
       setMessage("Could not read catalogue CSV.");
     } finally {
       event.target.value = "";
+    }
+  }
+
+  async function syncErpNextCatalogue() {
+    setIsSyncingItems(true);
+    setMessage("");
+
+    try {
+      const response = await fetch("/api/items/sync");
+      const data = (await response.json()) as ItemSyncResponse;
+      if (!response.ok) throw new Error(data.error || "Could not sync ERPNext items.");
+
+      setItemMasterText(JSON.stringify(data.items || [], null, 2));
+      setMessage(`${data.count || 0} active ERPNext items synced.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not sync ERPNext items.");
+    } finally {
+      setIsSyncingItems(false);
     }
   }
 
@@ -272,6 +298,10 @@ export default function Home() {
             <h2>Item master aliases</h2>
           </div>
           <div className="catalogue-actions">
+            <button className="secondary-button" type="button" onClick={syncErpNextCatalogue} disabled={isSyncingItems}>
+              {isSyncingItems ? <Loader2 className="spin" size={16} /> : <RefreshCcw size={16} />}
+              Sync ERPNext
+            </button>
             <label className="secondary-button file-button">
               <UploadCloud size={16} />
               Upload CSV
