@@ -81,6 +81,29 @@ function demoLines(): ExtractedLine[] {
   ];
 }
 
+function getOpenAIErrorResponse(error: unknown) {
+  const status = typeof error === "object" && error && "status" in error ? Number(error.status) : 500;
+  const code =
+    typeof error === "object" && error && "code" in error && typeof error.code === "string" ? error.code : "";
+
+  if (status === 401) {
+    return NextResponse.json({ error: "OpenAI API key is invalid. Please update OPENAI_API_KEY." }, { status: 401 });
+  }
+
+  if (status === 429 && code === "insufficient_quota") {
+    return NextResponse.json(
+      { error: "OpenAI quota is not available. Please enable billing or add credits for this OpenAI project." },
+      { status: 429 }
+    );
+  }
+
+  if (status === 429) {
+    return NextResponse.json({ error: "OpenAI rate limit reached. Please try again shortly." }, { status: 429 });
+  }
+
+  return NextResponse.json({ error: "OpenAI extraction failed. Please try again." }, { status: 500 });
+}
+
 export async function POST(request: Request) {
   const formData = await request.formData();
   const file = formData.get("image");
@@ -104,41 +127,45 @@ export async function POST(request: Request) {
   const imageUrl = await fileToDataUrl(file);
   const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
-  const response = await client.responses.create({
-    model,
-    input: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "input_text",
-            text:
-              "Extract this handwritten sales order into structured rows. Preserve the written item shorthand. " +
-              "Read quantities and units carefully. If a row is unclear, still include it and explain uncertainty in notes."
-          },
-          {
-            type: "input_image",
-            image_url: imageUrl,
-            detail: "high"
-          }
-        ]
+  try {
+    const response = await client.responses.create({
+      model,
+      input: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text:
+                "Extract this handwritten sales order into structured rows. Preserve the written item shorthand. " +
+                "Read quantities and units carefully. If a row is unclear, still include it and explain uncertainty in notes."
+            },
+            {
+              type: "input_image",
+              image_url: imageUrl,
+              detail: "high"
+            }
+          ]
+        }
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          ...extractionSchema
+        }
       }
-    ],
-    text: {
-      format: {
-        type: "json_schema",
-        ...extractionSchema
-      }
-    }
-  });
+    });
 
-  const parsed = JSON.parse(response.output_text || "{}") as {
-    customerName?: string;
-    lines?: ExtractedLine[];
-  };
+    const parsed = JSON.parse(response.output_text || "{}") as {
+      customerName?: string;
+      lines?: ExtractedLine[];
+    };
 
-  return NextResponse.json({
-    customerName: parsed.customerName || "",
-    lines: matchLines(parsed.lines || [], itemMaster)
-  });
+    return NextResponse.json({
+      customerName: parsed.customerName || "",
+      lines: matchLines(parsed.lines || [], itemMaster)
+    });
+  } catch (error) {
+    return getOpenAIErrorResponse(error);
+  }
 }
