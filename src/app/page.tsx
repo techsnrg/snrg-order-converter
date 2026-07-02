@@ -6,8 +6,8 @@ import {
   Database,
   Download,
   FileImage,
-  FileSpreadsheet,
   Loader2,
+  PackageCheck,
   RefreshCcw,
   Sparkles,
   UploadCloud
@@ -527,9 +527,14 @@ export default function Home() {
   return (
     <main className="app-shell">
       <section className="topbar">
-        <div>
-          <p className="eyebrow">SNRG internal tool</p>
-          <h1>Order Converter</h1>
+        <div className="brand-lockup">
+          <div className="brand-mark">
+            <span>GC</span>
+          </div>
+          <div>
+            <p className="eyebrow">Gold Coast Electricals</p>
+            <h1>Order Converter</h1>
+          </div>
         </div>
         <button
           className="secondary-button"
@@ -547,14 +552,20 @@ export default function Home() {
 
       <section className="workspace">
         <div className="panel upload-panel">
-          <div className="panel-title">
-            <FileImage size={18} />
-            <h2>Order photo</h2>
+          <div className="panel-title panel-title-split">
+            <div className="panel-heading-inline">
+              <FileImage size={18} />
+              <h2>Order photo</h2>
+            </div>
+            {image ? <span className="pill">{image.name}</span> : null}
           </div>
 
           <label className="dropzone">
-            <UploadCloud size={28} />
-            <span>{image ? image.name : "Upload WhatsApp order image"}</span>
+            <span className="upload-icon">
+              <UploadCloud size={30} />
+            </span>
+            <strong>{image ? "Photo ready" : "Upload order photo"}</strong>
+            <small>{image ? image.name : "JPG, PNG, or WhatsApp image"}</small>
             <input accept="image/*" type="file" onChange={handleImageChange} />
           </label>
 
@@ -567,47 +578,46 @@ export default function Home() {
         </div>
 
         <div className="panel catalogue-panel">
-          <div className="panel-title panel-title-split">
+          <div className="compact-catalogue-head">
             <div>
-              <p className="eyebrow">Catalogue</p>
-              <h2>ERPNext items</h2>
+              <p className="eyebrow">ERPNext catalogue</p>
+              <h2>{catalogueStats.itemCount.toLocaleString("en-IN")} items ready</h2>
             </div>
-            <Database size={22} />
+            <PackageCheck size={24} />
           </div>
 
-          <div className="catalogue-metrics">
-            <div className="metric">
-              <span>Items</span>
-              <strong>{catalogueStats.itemCount.toLocaleString("en-IN")}</strong>
-            </div>
-            <div className="metric">
-              <span>UOM factors</span>
-              <strong>{catalogueStats.uomReady.toLocaleString("en-IN")}</strong>
-            </div>
-            <div className="metric">
-              <span>Source</span>
-              <strong>{catalogueSource}</strong>
-            </div>
+          <div className="catalogue-summary">
+            <span>{catalogueStats.uomReady.toLocaleString("en-IN")} UOM factors</span>
+            <span>{catalogueSource}</span>
+            <span>{catalogueUpdatedAt ? `Updated ${catalogueUpdatedAt}` : "Not synced"}</span>
           </div>
 
-          <div className="catalogue-actions">
+          <div className="compact-catalogue-actions">
             <button className="secondary-button" type="button" onClick={syncErpNextCatalogue} disabled={isSyncingItems}>
               {isSyncingItems ? <Loader2 className="spin" size={16} /> : <RefreshCcw size={16} />}
               Sync ERPNext
             </button>
-            <label className="secondary-button file-button">
-              <UploadCloud size={16} />
-              Upload CSV
-              <input accept=".csv,text/csv" type="file" onChange={handleCatalogueUpload} />
-            </label>
-            <button className="secondary-button" type="button" onClick={downloadCatalogueTemplate}>
-              <Download size={16} />
-              Template
-            </button>
+            <details className="advanced-catalogue">
+              <summary>
+                <Database size={16} />
+                Advanced
+              </summary>
+              <div className="advanced-catalogue-body">
+                <label className="secondary-button file-button">
+                  <UploadCloud size={16} />
+                  Upload CSV
+                  <input accept=".csv,text/csv" type="file" onChange={handleCatalogueUpload} />
+                </label>
+                <button className="secondary-button" type="button" onClick={downloadCatalogueTemplate}>
+                  <Download size={16} />
+                  Template
+                </button>
+              </div>
+            </details>
           </div>
 
           {syncProgress ? (
-            <div className="sync-progress">
+            <div className="sync-progress compact-sync-progress">
               <div className="sync-progress-head">
                 <span>{syncProgress}</span>
                 <span>{syncPercent}%</span>
@@ -617,11 +627,6 @@ export default function Home() {
               </div>
             </div>
           ) : null}
-
-          <div className="catalogue-foot">
-            <FileSpreadsheet size={16} />
-            <span>{catalogueUpdatedAt ? `Updated ${catalogueUpdatedAt}` : "Ready for sync"}</span>
-          </div>
         </div>
       </section>
 
