@@ -34,6 +34,16 @@ type CachedCatalogue = {
   updatedAt: string;
 };
 
+type SharedCatalogueCacheResponse = {
+  configured: boolean;
+  cache?: {
+    items: ItemMasterRow[];
+    source: string;
+    updatedAt: string;
+  } | null;
+  error?: string;
+};
+
 const emptyRows: ConvertedLine[] = [];
 const catalogueHeaders = ["itemCode", "itemName", "aliases", "defaultUom", "conversionQty"];
 const catalogueCacheKey = "snrg-order-converter:item-catalogue:v1";
@@ -193,6 +203,24 @@ function saveCatalogueCache(cache: CachedCatalogue) {
   }
 }
 
+async function saveSharedCatalogueCache(items: ItemMasterRow[], source: string) {
+  const response = await fetch("/api/items/cache", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      items,
+      source
+    })
+  });
+
+  if (!response.ok) {
+    const data = (await response.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || "Could not save shared item catalogue.");
+  }
+}
+
 export default function Home() {
   const [image, setImage] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string>("");
@@ -210,19 +238,50 @@ export default function Home() {
   const reviewCount = useMemo(() => rows.filter((row) => row.needsReview).length, [rows]);
   const catalogueStats = useMemo(() => getCatalogueStats(itemMasterText), [itemMasterText]);
 
-  useEffect(() => {
+  function restoreLocalCatalogueCache() {
     try {
       const cached = localStorage.getItem(catalogueCacheKey);
-      if (!cached) return;
+      if (!cached) return false;
 
       const parsed = JSON.parse(cached) as CachedCatalogue;
       parseItemMasterText(parsed.itemMasterText);
       setItemMasterText(parsed.itemMasterText);
       setCatalogueSource(parsed.source || "Saved");
       setCatalogueUpdatedAt(parsed.updatedAt || "");
+      return true;
     } catch {
       localStorage.removeItem(catalogueCacheKey);
+      return false;
     }
+  }
+
+  useEffect(() => {
+    async function loadSharedCatalogueCache() {
+      try {
+        const response = await fetch("/api/items/cache");
+        const data = (await response.json()) as SharedCatalogueCacheResponse;
+
+        if (response.ok && data.cache?.items?.length) {
+          const itemMaster = JSON.stringify(data.cache.items, null, 2);
+          const updatedAt = formatTimeLabel(new Date(data.cache.updatedAt));
+          setItemMasterText(itemMaster);
+          setCatalogueSource(data.cache.source || "Shared");
+          setCatalogueUpdatedAt(updatedAt);
+          saveCatalogueCache({
+            itemMasterText: itemMaster,
+            source: data.cache.source || "Shared",
+            updatedAt
+          });
+          return;
+        }
+      } catch {
+        // Fall back to browser cache when the shared cache is unavailable.
+      }
+
+      restoreLocalCatalogueCache();
+    }
+
+    loadSharedCatalogueCache();
   }, []);
 
   function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
@@ -254,7 +313,16 @@ export default function Home() {
         source: file.name,
         updatedAt
       });
-      setMessage(`${catalogue.length} catalogue items loaded from ${file.name}.`);
+      try {
+        await saveSharedCatalogueCache(catalogue, file.name);
+        setMessage(`${catalogue.length} catalogue items loaded from ${file.name} and saved to Supabase.`);
+      } catch (error) {
+        setMessage(
+          `${catalogue.length} catalogue items loaded locally. ${
+            error instanceof Error ? error.message : "Could not save shared item catalogue."
+          }`
+        );
+      }
     } catch {
       setMessage("Could not read catalogue CSV.");
     } finally {

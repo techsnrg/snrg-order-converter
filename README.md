@@ -27,11 +27,15 @@ OPENAI_MODEL=gpt-4.1-mini
 ERPNEXT_BASE_URL=https://your-erpnext-site.com
 ERPNEXT_API_KEY=...
 ERPNEXT_API_SECRET=...
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=...
 ```
 
 Without `OPENAI_API_KEY`, the extraction API returns demo rows so the review and Excel export flow can be tested.
 
 Without the ERPNext variables, the **Sync ERPNext** button will show a configuration error. CSV upload remains available as a fallback.
+
+Without the Supabase variables, the item catalogue is cached only in the current browser. With Supabase configured, ERPNext sync and CSV upload save one shared catalogue for all coordinators.
 
 ## Item catalogue
 
@@ -64,6 +68,26 @@ The imported CSV is converted into the JSON shown in the page:
   }
 ]
 ```
+
+## Supabase shared catalogue cache
+
+Supabase stores the latest synced item catalogue so coordinators do not need to sync ERPNext on every device/browser.
+
+The app uses this table:
+
+```sql
+public.order_converter_cache
+```
+
+The table has RLS enabled. Browser clients do not talk to Supabase directly; Next.js API routes use `SUPABASE_SERVICE_ROLE_KEY` on the server.
+
+On page load, the app tries this order:
+
+1. Load shared catalogue from Supabase.
+2. Fall back to browser cache.
+3. Fall back to bundled sample items.
+
+When **Sync ERPNext** succeeds, the app also saves that item catalogue to Supabase.
 
 ## ERPNext setup
 

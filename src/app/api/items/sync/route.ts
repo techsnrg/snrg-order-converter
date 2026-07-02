@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetchErpNextItems } from "@/lib/erpnext/items";
+import { writeCatalogueCache } from "@/lib/supabase/catalogue-cache";
 
 export const runtime = "nodejs";
 
@@ -16,13 +17,23 @@ export async function GET() {
         const result = await fetchErpNextItems((progress) => {
           send({ event: "progress", ...progress });
         });
+        let supabaseWarning = "";
+
+        try {
+          const cache = await writeCatalogueCache(result.items, "ERPNext");
+          if (!cache) {
+            supabaseWarning = "Supabase catalogue cache is not configured.";
+          }
+        } catch (error) {
+          supabaseWarning = error instanceof Error ? error.message : "Could not save shared catalogue cache.";
+        }
 
         send({
           event: "result",
           items: result.items,
           count: result.items.length,
           syncedAt: new Date().toISOString(),
-          warning: result.warning,
+          warning: [result.warning, supabaseWarning].filter(Boolean).join(" "),
           requiresCustomFieldSetup: result.requiresCustomFieldSetup
         });
       } catch (error) {
