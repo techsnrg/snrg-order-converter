@@ -7,7 +7,7 @@ Private web app for converting handwritten WhatsApp sales orders into ERPNext-re
 1. Coordinator opens the private app link.
 2. Uploads the handwritten order image.
 3. The app extracts item rows using OpenAI vision.
-4. The app cross-references extracted text with item master aliases.
+4. The app cross-references extracted text with ERPNext item codes and parsing rules.
 5. Coordinator reviews low-confidence rows.
 6. Coordinator exports an Excel-compatible `.xls` file and copies columns into ERPNext Quotation Items.
 
@@ -47,7 +47,7 @@ Column meaning:
 
 - `itemCode`: exact ERPNext item code to paste/create in quotation item table.
 - `itemName`: readable item name from ERPNext.
-- `aliases`: salesperson shorthand or handwritten variations, separated with `|`.
+- `aliases`: optional fallback aliases, separated with `|`. Use this only for exceptions; normal shorthand should be handled by parsing rules.
 - `defaultUom`: ERPNext UOM for the quotation row.
 - `conversionQty`: multiplier from extracted order quantity to ERP quantity. Example: if `1 CTN` should become `300 Nos`, use `300`.
 
@@ -67,17 +67,16 @@ The imported CSV is converted into the JSON shown in the page:
 
 ## ERPNext setup
 
-ERPNext should remain the source of truth for item codes, UOM, aliases, and conversion quantities.
+ERPNext should remain the source of truth for item codes, UOM, and conversion quantities. Handwritten shorthand logic should live in the app, not as thousands of item aliases.
 
 ### 1. Add custom fields on Item
 
 In ERPNext, go to **Customize Form** and select **Item**.
 
-Add these fields:
+Add this field:
 
 | Label | Fieldname | Type | Purpose |
 | --- | --- | --- | --- |
-| Sales Aliases | `custom_sales_aliases` | Small Text | Handwritten/sales-team names such as `10105 VB, 10105, 10105-VB` |
 | Quotation Conversion Qty | `custom_quotation_conversion_qty` | Float | Multiplier from extracted order quantity to ERP quantity |
 
 Example:
@@ -87,10 +86,21 @@ Example:
 | Item Code | `10105-WH` |
 | Item Name | `10105 WH` |
 | Stock UOM | `Nos` |
-| Sales Aliases | `10105 VB, 10105, 10105-VB` |
 | Quotation Conversion Qty | `300` |
 
-That means a handwritten line like `10105 VB - 01 CTN` can become `10105-WH`, quantity `300`, UOM `Nos`.
+That means once the app resolves a handwritten line to `10105-WH`, quantity `1 CTN` can become `300 Nos`.
+
+### Parsing rules live in the app
+
+The app should learn order-writing patterns separately from ERPNext. Examples:
+
+| Written by sales | App interpretation |
+| --- | --- |
+| `10105 VB` | `10105-VB` |
+| `GCP006 010` | `GCP006-010` |
+| `GCSP006`, then `"` + `010` | `GCSP006`, then `GCSP010` |
+
+These rules are not item aliases. They are document-level parsing logic, because the meaning can depend on the previous row, punctuation, or salesperson writing style.
 
 ### 2. Create an API user
 
@@ -135,7 +145,6 @@ Fields fetched:
 item_code
 item_name
 stock_uom
-custom_sales_aliases
 custom_quotation_conversion_qty
 ```
 

@@ -4,7 +4,6 @@ type ErpNextItem = {
   item_code: string;
   item_name?: string;
   stock_uom?: string;
-  custom_sales_aliases?: string;
   custom_quotation_conversion_qty?: number | string;
 };
 
@@ -23,7 +22,6 @@ const customItemFields = [
   "item_code",
   "item_name",
   "stock_uom",
-  "custom_sales_aliases",
   "custom_quotation_conversion_qty"
 ];
 
@@ -46,20 +44,11 @@ function buildItemUrl(limitStart: number, fields: string[]) {
   return url;
 }
 
-function splitAliases(value: string | undefined, itemCode: string) {
-  const aliases = (value || "")
-    .split(/[\n,|]+/)
-    .map((alias) => alias.trim())
-    .filter(Boolean);
-
-  return Array.from(new Set([itemCode, ...aliases]));
-}
-
 function toItemMasterRow(item: ErpNextItem): ItemMasterRow {
   return {
     itemCode: item.item_code,
     itemName: item.item_name || item.item_code,
-    aliases: splitAliases(item.custom_sales_aliases, item.item_code),
+    aliases: [item.item_code],
     defaultUom: item.stock_uom || "Nos",
     conversionQty: Number(item.custom_quotation_conversion_qty || 1) || 1
   };
@@ -68,7 +57,7 @@ function toItemMasterRow(item: ErpNextItem): ItemMasterRow {
 function isMissingCustomFieldError(status: number, body: string) {
   return (
     status === 417 &&
-    (body.includes("custom_sales_aliases") || body.includes("custom_quotation_conversion_qty")) &&
+    body.includes("custom_quotation_conversion_qty") &&
     body.includes("Field not permitted in query")
   );
 }
@@ -118,7 +107,7 @@ export async function fetchErpNextItems(): Promise<ErpNextItemSyncResult> {
       return {
         items: await fetchItemsWithFields(standardItemFields),
         warning:
-          "ERPNext connection works, but Item custom fields are missing or not readable. Add custom_sales_aliases and custom_quotation_conversion_qty to enable alias matching and conversion qty.",
+          "ERPNext connection works, but custom_quotation_conversion_qty is missing or not readable. Add it to enable packing/conversion quantities. Item-code matching still works from ERPNext item codes.",
         requiresCustomFieldSetup: true
       };
     }
