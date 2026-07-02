@@ -143,7 +143,9 @@ Restart the dev server after changing `.env.local`.
 
 ### 4. Sync items
 
-Open the app and click **Sync ERPNext** in the item catalogue panel. The app will fetch active ERPNext items using:
+Open the app and click **Sync ERPNext** in the item catalogue panel. The app shows progress while it loads the item list and each item's UOM conversion rows.
+
+The app will fetch active ERPNext items using:
 
 ```text
 GET /api/resource/Item

@@ -20,6 +20,28 @@ type ErpNextItemSyncResult = {
   requiresCustomFieldSetup: boolean;
 };
 
+export type ErpNextSyncProgress =
+  | {
+      type: "item-list";
+      loaded: number;
+      message: string;
+    }
+  | {
+      type: "item-details";
+      processed: number;
+      total: number;
+      failed: number;
+      message: string;
+    }
+  | {
+      type: "complete";
+      count: number;
+      warning?: string;
+      message: string;
+    };
+
+type SyncProgressCallback = (progress: ErpNextSyncProgress) => void;
+
 const standardItemFields = ["item_code", "item_name", "stock_uom"];
 const itemDetailConcurrency = 4;
 
@@ -121,7 +143,7 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
-async function fetchItemsWithFields(fields: string[]) {
+async function fetchItemsWithFields(fields: string[], onProgress?: SyncProgressCallback) {
   const items: ItemMasterRow[] = [];
   let limitStart = 0;
 
@@ -139,6 +161,11 @@ async function fetchItemsWithFields(fields: string[]) {
     const payload = (await response.json()) as ErpNextListResponse;
     const page = payload.data || [];
     items.push(...page.map((item) => toItemMasterRow(item)));
+    onProgress?.({
+      type: "item-list",
+      loaded: items.length,
+      message: `${items.length} ERPNext items loaded`
+    });
 
     if (page.length < 500) break;
     limitStart += page.length;
@@ -147,24 +174,46 @@ async function fetchItemsWithFields(fields: string[]) {
   return items;
 }
 
-export async function fetchErpNextItems(): Promise<ErpNextItemSyncResult> {
-  const baseItems = await fetchItemsWithFields(standardItemFields);
+export async function fetchErpNextItems(onProgress?: SyncProgressCallback): Promise<ErpNextItemSyncResult> {
+  const baseItems = await fetchItemsWithFields(standardItemFields, onProgress);
   let failedDetailCount = 0;
+  let processedDetailCount = 0;
 
   const items = await mapWithConcurrency(baseItems, itemDetailConcurrency, async (item) => {
     const detail = await fetchItemDetail(item.itemCode);
     if (!detail) failedDetailCount += 1;
+    processedDetailCount += 1;
+
+    if (processedDetailCount === 1 || processedDetailCount % 50 === 0 || processedDetailCount === baseItems.length) {
+      onProgress?.({
+        type: "item-details",
+        processed: processedDetailCount,
+        total: baseItems.length,
+        failed: failedDetailCount,
+        message: `${processedDetailCount}/${baseItems.length} item UOM conversions loaded`
+      });
+    }
+
     return {
       ...item,
       uomConversions: detail ? buildUomConversions(detail) : item.uomConversions
     };
   });
 
+  const warning = failedDetailCount
+    ? `${failedDetailCount} ERPNext item details could not be loaded, so those rows may miss Box/Carton conversion factors.`
+    : undefined;
+
+  onProgress?.({
+    type: "complete",
+    count: items.length,
+    warning,
+    message: `${items.length} ERPNext items synced`
+  });
+
   return {
     items,
-    warning: failedDetailCount
-      ? `${failedDetailCount} ERPNext item details could not be loaded, so those rows may miss Box/Carton conversion factors.`
-      : undefined,
+    warning,
     requiresCustomFieldSetup: false
   };
 }

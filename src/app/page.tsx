@@ -13,8 +13,15 @@ type ApiResponse = {
 };
 
 type ItemSyncResponse = {
+  event?: "progress" | "result" | "error";
+  type?: "item-list" | "item-details" | "complete";
   items?: ItemMasterRow[];
   count?: number;
+  loaded?: number;
+  processed?: number;
+  total?: number;
+  failed?: number;
+  message?: string;
   syncedAt?: string;
   warning?: string;
   requiresCustomFieldSetup?: boolean;
@@ -156,6 +163,8 @@ export default function Home() {
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncingItems, setIsSyncingItems] = useState(false);
+  const [syncProgress, setSyncProgress] = useState("");
+  const [syncPercent, setSyncPercent] = useState(0);
 
   const reviewCount = useMemo(() => rows.filter((row) => row.needsReview).length, [rows]);
 
@@ -189,17 +198,55 @@ export default function Home() {
 
   async function syncErpNextCatalogue() {
     setIsSyncingItems(true);
+    setSyncProgress("Starting ERPNext sync...");
+    setSyncPercent(2);
     setMessage("");
 
     try {
       const response = await fetch("/api/items/sync");
-      const data = (await response.json()) as ItemSyncResponse;
-      if (!response.ok) throw new Error(data.error || "Could not sync ERPNext items.");
+      if (!response.ok || !response.body) throw new Error("Could not sync ERPNext items.");
 
-      setItemMasterText(JSON.stringify(data.items || [], null, 2));
-      setMessage(data.warning || `${data.count || 0} active ERPNext items synced.`);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const data = JSON.parse(line) as ItemSyncResponse;
+
+          if (data.event === "error") throw new Error(data.error || "Could not sync ERPNext items.");
+
+          if (data.event === "progress") {
+            setSyncProgress(data.message || "Syncing ERPNext items...");
+            if (data.type === "item-list") {
+              setSyncPercent(10);
+            } else if (data.type === "item-details" && data.total) {
+              setSyncPercent(10 + Math.round(((data.processed || 0) / data.total) * 85));
+            } else if (data.type === "complete") {
+              setSyncPercent(98);
+            }
+          }
+
+          if (data.event === "result") {
+            setItemMasterText(JSON.stringify(data.items || [], null, 2));
+            setSyncProgress(data.warning || `${data.count || 0} active ERPNext items synced.`);
+            setSyncPercent(100);
+            setMessage(data.warning || `${data.count || 0} active ERPNext items synced.`);
+          }
+        }
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not sync ERPNext items.");
+      setSyncProgress("");
+      setSyncPercent(0);
     } finally {
       setIsSyncingItems(false);
     }
@@ -314,6 +361,17 @@ export default function Home() {
               Template
             </button>
           </div>
+          {syncProgress ? (
+            <div className="sync-progress">
+              <div className="sync-progress-head">
+                <span>{syncProgress}</span>
+                <span>{syncPercent}%</span>
+              </div>
+              <div className="sync-progress-track">
+                <div className="sync-progress-bar" style={{ width: `${syncPercent}%` }} />
+              </div>
+            </div>
+          ) : null}
           <textarea
             value={itemMasterText}
             onChange={(event) => setItemMasterText(event.target.value)}
