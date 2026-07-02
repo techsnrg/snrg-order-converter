@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { sampleItemMaster } from "@/data/sample-item-master";
 import { matchLines } from "@/lib/matching";
+import { readRecentCorrectionExamples } from "@/lib/supabase/corrections";
 import type { ExtractedLine, ItemMasterRow } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -81,6 +82,19 @@ function demoLines(): ExtractedLine[] {
   ];
 }
 
+function formatCorrectionExamples(examples: Awaited<ReturnType<typeof readRecentCorrectionExamples>>) {
+  if (!examples.length) return "";
+
+  const lines = examples.map(
+    (example, index) =>
+      `${index + 1}. Written: "${example.handwrittenText}" -> corrected item ${example.correctedItemCode}, qty ${
+        example.correctedErpQty
+      } ${example.correctedUom}`
+  );
+
+  return `\n\nRecent coordinator corrections to learn from:\n${lines.join("\n")}`;
+}
+
 function getOpenAIErrorResponse(error: unknown) {
   const status = typeof error === "object" && error && "status" in error ? Number(error.status) : 500;
   const code =
@@ -126,6 +140,7 @@ export async function POST(request: Request) {
 
   const imageUrl = await fileToDataUrl(file);
   const model = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+  const correctionExamples = await readRecentCorrectionExamples();
 
   try {
     const response = await client.responses.create({
@@ -138,7 +153,8 @@ export async function POST(request: Request) {
               type: "input_text",
               text:
                 "Extract this handwritten sales order into structured rows. Preserve the written item shorthand. " +
-                "Read quantities and units carefully. If a row is unclear, still include it and explain uncertainty in notes."
+                "Read quantities and units carefully. If a row is unclear, still include it and explain uncertainty in notes." +
+                formatCorrectionExamples(correctionExamples)
             },
             {
               type: "input_image",

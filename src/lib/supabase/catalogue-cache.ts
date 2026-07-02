@@ -24,12 +24,20 @@ function getSupabaseConfig() {
   };
 }
 
-function getHeaders(serviceRoleKey: string) {
+export function isSupabaseConfigured() {
+  return Boolean(getSupabaseConfig());
+}
+
+export function getSupabaseHeaders(serviceRoleKey: string) {
   return {
     apikey: serviceRoleKey,
     Authorization: `Bearer ${serviceRoleKey}`,
     "Content-Type": "application/json"
   };
+}
+
+export function getSupabaseRestConfig() {
+  return getSupabaseConfig();
 }
 
 function getStats(items: ItemMasterRow[]) {
@@ -40,7 +48,7 @@ function getStats(items: ItemMasterRow[]) {
 }
 
 export function isCatalogueCacheConfigured() {
-  return Boolean(getSupabaseConfig());
+  return isSupabaseConfigured();
 }
 
 export async function readCatalogueCache(): Promise<CatalogueCache | null> {
@@ -50,7 +58,7 @@ export async function readCatalogueCache(): Promise<CatalogueCache | null> {
   const response = await fetch(
     `${config.url}/rest/v1/${tableName}?cache_key=eq.${catalogueCacheKey}&select=data,source,item_count,uom_ready_count,synced_at,updated_at`,
     {
-      headers: getHeaders(config.serviceRoleKey),
+      headers: getSupabaseHeaders(config.serviceRoleKey),
       cache: "no-store"
     }
   );
@@ -90,7 +98,7 @@ export async function writeCatalogueCache(items: ItemMasterRow[], source: string
   const response = await fetch(`${config.url}/rest/v1/${tableName}`, {
     method: "POST",
     headers: {
-      ...getHeaders(config.serviceRoleKey),
+      ...getSupabaseHeaders(config.serviceRoleKey),
       Prefer: "resolution=merge-duplicates,return=representation"
     },
     body: JSON.stringify({

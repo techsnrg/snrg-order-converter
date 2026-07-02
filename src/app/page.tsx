@@ -1,7 +1,17 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useState } from "react";
-import { Database, Download, FileImage, FileSpreadsheet, Loader2, RefreshCcw, UploadCloud } from "lucide-react";
+import {
+  Clipboard,
+  Database,
+  Download,
+  FileImage,
+  FileSpreadsheet,
+  Loader2,
+  RefreshCcw,
+  Sparkles,
+  UploadCloud
+} from "lucide-react";
 import { sampleItemMaster } from "@/data/sample-item-master";
 import type { ConvertedLine, ItemMasterRow } from "@/lib/types";
 
@@ -41,6 +51,12 @@ type SharedCatalogueCacheResponse = {
     source: string;
     updatedAt: string;
   } | null;
+  error?: string;
+};
+
+type CorrectionSaveResponse = {
+  saved?: number;
+  changed?: number;
   error?: string;
 };
 
@@ -221,14 +237,22 @@ async function saveSharedCatalogueCache(items: ItemMasterRow[], source: string) 
   }
 }
 
+async function copyColumn(values: Array<string | number>) {
+  const text = values.map((value) => String(value ?? "")).join("\n");
+  await navigator.clipboard.writeText(text);
+}
+
 export default function Home() {
   const [image, setImage] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string>("");
   const [itemMasterText, setItemMasterText] = useState(JSON.stringify(sampleItemMaster, null, 2));
   const [rows, setRows] = useState<ConvertedLine[]>(emptyRows);
+  const [originalRows, setOriginalRows] = useState<ConvertedLine[]>(emptyRows);
   const [customerName, setCustomerName] = useState("");
   const [message, setMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isFinalizing, setIsFinalizing] = useState(false);
+  const [isFinalized, setIsFinalized] = useState(false);
   const [isSyncingItems, setIsSyncingItems] = useState(false);
   const [syncProgress, setSyncProgress] = useState("");
   const [syncPercent, setSyncPercent] = useState(0);
@@ -288,6 +312,8 @@ export default function Home() {
     const file = event.target.files?.[0] || null;
     setImage(file);
     setRows(emptyRows);
+    setOriginalRows(emptyRows);
+    setIsFinalized(false);
     setMessage("");
     setPreviewUrl(file ? URL.createObjectURL(file) : "");
   }
@@ -396,6 +422,7 @@ export default function Home() {
   }
 
   function updateRow(index: number, patch: Partial<ConvertedLine>) {
+    setIsFinalized(false);
     setRows((currentRows) =>
       currentRows.map((row, rowIndex) =>
         rowIndex === index
@@ -407,6 +434,51 @@ export default function Home() {
           : row
       )
     );
+  }
+
+  async function finalizeRows() {
+    if (!rows.length) {
+      setMessage("Convert an order before finalizing.");
+      return;
+    }
+
+    setIsFinalizing(true);
+    setMessage("");
+
+    try {
+      const response = await fetch("/api/corrections", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          customerName,
+          imageName: image?.name || "",
+          originalRows,
+          correctedRows: rows
+        })
+      });
+      const data = (await response.json()) as CorrectionSaveResponse;
+
+      if (!response.ok) throw new Error(data.error || "Could not save correction history.");
+
+      setIsFinalized(true);
+      setMessage(`Finalized ${data.saved || rows.length} rows. ${data.changed || 0} corrections saved for learning.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not save correction history.");
+    } finally {
+      setIsFinalizing(false);
+    }
+  }
+
+  async function copyItemCodes() {
+    await copyColumn(rows.map((row) => row.itemCode));
+    setMessage(`${rows.length} item codes copied. Paste into ERPNext Item Code column.`);
+  }
+
+  async function copyQuantities() {
+    await copyColumn(rows.map((row) => row.erpQty));
+    setMessage(`${rows.length} quantities copied. Paste into ERPNext Qty column.`);
   }
 
   async function convertOrder() {
@@ -439,7 +511,10 @@ export default function Home() {
       const data = (await response.json()) as ApiResponse;
       if (!response.ok) throw new Error(data.error || "Could not convert the order.");
 
-      setRows(data.lines || []);
+      const nextRows = data.lines || [];
+      setRows(nextRows);
+      setOriginalRows(nextRows.map((row) => ({ ...row })));
+      setIsFinalized(false);
       setCustomerName(data.customerName || "");
       setMessage(data.warning || "Order converted. Review highlighted rows before exporting.");
     } catch (error) {
@@ -456,7 +531,15 @@ export default function Home() {
           <p className="eyebrow">SNRG internal tool</p>
           <h1>Order Converter</h1>
         </div>
-        <button className="secondary-button" type="button" onClick={() => setRows(emptyRows)}>
+        <button
+          className="secondary-button"
+          type="button"
+          onClick={() => {
+            setRows(emptyRows);
+            setOriginalRows(emptyRows);
+            setIsFinalized(false);
+          }}
+        >
           <RefreshCcw size={16} />
           Reset
         </button>
@@ -552,6 +635,18 @@ export default function Home() {
           </div>
           <div className="actions">
             <span className={reviewCount ? "pill warn" : "pill"}>{reviewCount} need review</span>
+            <button className="secondary-button" type="button" disabled={!rows.length || isFinalizing} onClick={finalizeRows}>
+              {isFinalizing ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />}
+              Finalize & Learn
+            </button>
+            <button className="secondary-button" type="button" disabled={!isFinalized} onClick={copyItemCodes}>
+              <Clipboard size={16} />
+              Copy Item Codes
+            </button>
+            <button className="secondary-button" type="button" disabled={!isFinalized} onClick={copyQuantities}>
+              <Clipboard size={16} />
+              Copy Qty
+            </button>
             <button className="primary-button" type="button" disabled={!rows.length} onClick={() => exportRows(rows)}>
               <Download size={16} />
               Export Excel

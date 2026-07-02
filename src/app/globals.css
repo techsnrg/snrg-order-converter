@@ -169,6 +169,11 @@ h2 {
   background: #e3e8e5;
 }
 
+.secondary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .upload-panel .primary-button {
   width: 100%;
   margin-top: 14px;
@@ -305,7 +310,10 @@ textarea {
 }
 
 .actions {
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
+  justify-content: flex-end;
 }
 
 .pill {
