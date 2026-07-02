@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { Database, Download, FileImage, FileSpreadsheet, Loader2, RefreshCcw, UploadCloud } from "lucide-react";
 import { sampleItemMaster } from "@/data/sample-item-master";
 import type { ConvertedLine, ItemMasterRow } from "@/lib/types";
@@ -28,8 +28,15 @@ type ItemSyncResponse = {
   error?: string;
 };
 
+type CachedCatalogue = {
+  itemMasterText: string;
+  source: string;
+  updatedAt: string;
+};
+
 const emptyRows: ConvertedLine[] = [];
 const catalogueHeaders = ["itemCode", "itemName", "aliases", "defaultUom", "conversionQty"];
+const catalogueCacheKey = "snrg-order-converter:item-catalogue:v1";
 
 function escapeCell(value: string | number) {
   return String(value)
@@ -178,6 +185,14 @@ function formatTimeLabel(value: Date) {
   });
 }
 
+function saveCatalogueCache(cache: CachedCatalogue) {
+  try {
+    localStorage.setItem(catalogueCacheKey, JSON.stringify(cache));
+  } catch {
+    // The synced catalogue can still be used for the current session if browser storage is unavailable.
+  }
+}
+
 export default function Home() {
   const [image, setImage] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string>("");
@@ -194,6 +209,21 @@ export default function Home() {
 
   const reviewCount = useMemo(() => rows.filter((row) => row.needsReview).length, [rows]);
   const catalogueStats = useMemo(() => getCatalogueStats(itemMasterText), [itemMasterText]);
+
+  useEffect(() => {
+    try {
+      const cached = localStorage.getItem(catalogueCacheKey);
+      if (!cached) return;
+
+      const parsed = JSON.parse(cached) as CachedCatalogue;
+      parseItemMasterText(parsed.itemMasterText);
+      setItemMasterText(parsed.itemMasterText);
+      setCatalogueSource(parsed.source || "Saved");
+      setCatalogueUpdatedAt(parsed.updatedAt || "");
+    } catch {
+      localStorage.removeItem(catalogueCacheKey);
+    }
+  }, []);
 
   function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0] || null;
@@ -214,9 +244,16 @@ export default function Home() {
         setMessage("Catalogue CSV has no item rows.");
         return;
       }
-      setItemMasterText(JSON.stringify(catalogue, null, 2));
+      const nextItemMasterText = JSON.stringify(catalogue, null, 2);
+      const updatedAt = formatTimeLabel(new Date());
+      setItemMasterText(nextItemMasterText);
       setCatalogueSource(file.name);
-      setCatalogueUpdatedAt(formatTimeLabel(new Date()));
+      setCatalogueUpdatedAt(updatedAt);
+      saveCatalogueCache({
+        itemMasterText: nextItemMasterText,
+        source: file.name,
+        updatedAt
+      });
       setMessage(`${catalogue.length} catalogue items loaded from ${file.name}.`);
     } catch {
       setMessage("Could not read catalogue CSV.");
@@ -265,9 +302,16 @@ export default function Home() {
           }
 
           if (data.event === "result") {
-            setItemMasterText(JSON.stringify(data.items || [], null, 2));
+            const nextItemMasterText = JSON.stringify(data.items || [], null, 2);
+            const updatedAt = formatTimeLabel(new Date());
+            setItemMasterText(nextItemMasterText);
             setCatalogueSource("ERPNext");
-            setCatalogueUpdatedAt(formatTimeLabel(new Date()));
+            setCatalogueUpdatedAt(updatedAt);
+            saveCatalogueCache({
+              itemMasterText: nextItemMasterText,
+              source: "ERPNext",
+              updatedAt
+            });
             setSyncProgress(data.warning || `${data.count || 0} active ERPNext items synced.`);
             setSyncPercent(100);
             setMessage(data.warning || `${data.count || 0} active ERPNext items synced.`);
