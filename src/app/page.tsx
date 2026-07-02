@@ -1,7 +1,7 @@
 "use client";
 
 import { ChangeEvent, useMemo, useState } from "react";
-import { Download, FileImage, Loader2, RefreshCcw, UploadCloud } from "lucide-react";
+import { Database, Download, FileImage, FileSpreadsheet, Loader2, RefreshCcw, UploadCloud } from "lucide-react";
 import { sampleItemMaster } from "@/data/sample-item-master";
 import type { ConvertedLine, ItemMasterRow } from "@/lib/types";
 
@@ -154,6 +154,30 @@ function parseItemMasterText(value: string): ItemMasterRow[] {
   }));
 }
 
+function getCatalogueStats(value: string) {
+  try {
+    const items = parseItemMasterText(value);
+    const uomReady = items.filter((item) => item.uomConversions && Object.keys(item.uomConversions).length > 1).length;
+
+    return {
+      itemCount: items.length,
+      uomReady
+    };
+  } catch {
+    return {
+      itemCount: 0,
+      uomReady: 0
+    };
+  }
+}
+
+function formatTimeLabel(value: Date) {
+  return value.toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
 export default function Home() {
   const [image, setImage] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string>("");
@@ -165,8 +189,11 @@ export default function Home() {
   const [isSyncingItems, setIsSyncingItems] = useState(false);
   const [syncProgress, setSyncProgress] = useState("");
   const [syncPercent, setSyncPercent] = useState(0);
+  const [catalogueSource, setCatalogueSource] = useState("Sample");
+  const [catalogueUpdatedAt, setCatalogueUpdatedAt] = useState("");
 
   const reviewCount = useMemo(() => rows.filter((row) => row.needsReview).length, [rows]);
+  const catalogueStats = useMemo(() => getCatalogueStats(itemMasterText), [itemMasterText]);
 
   function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0] || null;
@@ -188,6 +215,8 @@ export default function Home() {
         return;
       }
       setItemMasterText(JSON.stringify(catalogue, null, 2));
+      setCatalogueSource(file.name);
+      setCatalogueUpdatedAt(formatTimeLabel(new Date()));
       setMessage(`${catalogue.length} catalogue items loaded from ${file.name}.`);
     } catch {
       setMessage("Could not read catalogue CSV.");
@@ -237,6 +266,8 @@ export default function Home() {
 
           if (data.event === "result") {
             setItemMasterText(JSON.stringify(data.items || [], null, 2));
+            setCatalogueSource("ERPNext");
+            setCatalogueUpdatedAt(formatTimeLabel(new Date()));
             setSyncProgress(data.warning || `${data.count || 0} active ERPNext items synced.`);
             setSyncPercent(100);
             setMessage(data.warning || `${data.count || 0} active ERPNext items synced.`);
@@ -338,14 +369,32 @@ export default function Home() {
             {isLoading ? <Loader2 className="spin" size={16} /> : <UploadCloud size={16} />}
             Convert
           </button>
-
-          {message ? <p className="status">{message}</p> : null}
         </div>
 
-        <div className="panel item-master-panel">
-          <div className="panel-title">
-            <h2>Item master aliases</h2>
+        <div className="panel catalogue-panel">
+          <div className="panel-title panel-title-split">
+            <div>
+              <p className="eyebrow">Catalogue</p>
+              <h2>ERPNext items</h2>
+            </div>
+            <Database size={22} />
           </div>
+
+          <div className="catalogue-metrics">
+            <div className="metric">
+              <span>Items</span>
+              <strong>{catalogueStats.itemCount.toLocaleString("en-IN")}</strong>
+            </div>
+            <div className="metric">
+              <span>UOM factors</span>
+              <strong>{catalogueStats.uomReady.toLocaleString("en-IN")}</strong>
+            </div>
+            <div className="metric">
+              <span>Source</span>
+              <strong>{catalogueSource}</strong>
+            </div>
+          </div>
+
           <div className="catalogue-actions">
             <button className="secondary-button" type="button" onClick={syncErpNextCatalogue} disabled={isSyncingItems}>
               {isSyncingItems ? <Loader2 className="spin" size={16} /> : <RefreshCcw size={16} />}
@@ -361,6 +410,7 @@ export default function Home() {
               Template
             </button>
           </div>
+
           {syncProgress ? (
             <div className="sync-progress">
               <div className="sync-progress-head">
@@ -372,13 +422,15 @@ export default function Home() {
               </div>
             </div>
           ) : null}
-          <textarea
-            value={itemMasterText}
-            onChange={(event) => setItemMasterText(event.target.value)}
-            spellCheck={false}
-          />
+
+          <div className="catalogue-foot">
+            <FileSpreadsheet size={16} />
+            <span>{catalogueUpdatedAt ? `Updated ${catalogueUpdatedAt}` : "Ready for sync"}</span>
+          </div>
         </div>
       </section>
+
+      {message ? <section className="status-band">{message}</section> : null}
 
       <section className="results">
         <div className="results-head">
