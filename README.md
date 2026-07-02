@@ -28,9 +28,25 @@ OPENAI_MODEL=gpt-4.1-mini
 
 Without `OPENAI_API_KEY`, the extraction API returns demo rows so the review and Excel export flow can be tested.
 
-## Item master format
+## Item catalogue
 
-The current prototype accepts item aliases as JSON in the page. Later this should be replaced by ERPNext item sync.
+The page can load an item catalogue CSV exported from Excel. Use the **Template** button in the app, or create a CSV with these columns:
+
+```csv
+itemCode,itemName,aliases,defaultUom,conversionQty
+"10105-WH","10105 WH","10105 VB|10105|10105-VB","Nos","300"
+"GCP006-010","GCP006 010","GCP006 010|GCP006-010|GCP006","Box","1"
+```
+
+Column meaning:
+
+- `itemCode`: exact ERPNext item code to paste/create in quotation item table.
+- `itemName`: readable item name from ERPNext.
+- `aliases`: salesperson shorthand or handwritten variations, separated with `|`.
+- `defaultUom`: ERPNext UOM for the quotation row.
+- `conversionQty`: multiplier from extracted order quantity to ERP quantity. Example: if `1 CTN` should become `300 Nos`, use `300`.
+
+The imported CSV is converted into the JSON shown in the page:
 
 ```json
 [

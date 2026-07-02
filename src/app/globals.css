@@ -159,6 +159,24 @@ h2 {
   margin-top: 14px;
 }
 
+.catalogue-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.file-button {
+  position: relative;
+  overflow: hidden;
+}
+
+.file-button input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
 .status {
   margin: 12px 0 0;
   color: var(--muted);

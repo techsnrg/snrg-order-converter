@@ -13,6 +13,7 @@ type ApiResponse = {
 };
 
 const emptyRows: ConvertedLine[] = [];
+const catalogueHeaders = ["itemCode", "itemName", "aliases", "defaultUom", "conversionQty"];
 
 function escapeCell(value: string | number) {
   return String(value)
@@ -61,6 +62,74 @@ function exportRows(rows: ConvertedLine[]) {
   URL.revokeObjectURL(url);
 }
 
+function parseCsvLine(line: string) {
+  const cells: string[] = [];
+  let current = "";
+  let isQuoted = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+
+    if (char === '"' && next === '"') {
+      current += '"';
+      index += 1;
+    } else if (char === '"') {
+      isQuoted = !isQuoted;
+    } else if (char === "," && !isQuoted) {
+      cells.push(current.trim());
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+
+  cells.push(current.trim());
+  return cells;
+}
+
+function parseCatalogueCsv(value: string): ItemMasterRow[] {
+  const lines = value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length < 2) return [];
+
+  const headers = parseCsvLine(lines[0]).map((header) => header.trim());
+
+  return lines.slice(1).map((line) => {
+    const cells = parseCsvLine(line);
+    const row = Object.fromEntries(headers.map((header, index) => [header, cells[index] || ""]));
+
+    return {
+      itemCode: row.itemCode,
+      itemName: row.itemName,
+      aliases: row.aliases
+        .split("|")
+        .map((alias) => alias.trim())
+        .filter(Boolean),
+      defaultUom: row.defaultUom || "Nos",
+      conversionQty: Number(row.conversionQty || 1)
+    };
+  });
+}
+
+function downloadCatalogueTemplate() {
+  const sampleRows = [
+    catalogueHeaders.join(","),
+    '"10105-WH","10105 WH","10105 VB|10105|10105-VB","Nos","300"',
+    '"GCP006-010","GCP006 010","GCP006 010|GCP006-010|GCP006","Box","1"'
+  ];
+  const blob = new Blob([sampleRows.join("\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = "item-catalogue-template.csv";
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 function parseItemMasterText(value: string): ItemMasterRow[] {
   const parsed = JSON.parse(value) as ItemMasterRow[];
   return parsed.map((row) => ({
@@ -86,6 +155,26 @@ export default function Home() {
     setRows(emptyRows);
     setMessage("");
     setPreviewUrl(file ? URL.createObjectURL(file) : "");
+  }
+
+  async function handleCatalogueUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const catalogue = parseCatalogueCsv(text);
+      if (!catalogue.length) {
+        setMessage("Catalogue CSV has no item rows.");
+        return;
+      }
+      setItemMasterText(JSON.stringify(catalogue, null, 2));
+      setMessage(`${catalogue.length} catalogue items loaded from ${file.name}.`);
+    } catch {
+      setMessage("Could not read catalogue CSV.");
+    } finally {
+      event.target.value = "";
+    }
   }
 
   function updateRow(index: number, patch: Partial<ConvertedLine>) {
@@ -181,6 +270,17 @@ export default function Home() {
         <div className="panel item-master-panel">
           <div className="panel-title">
             <h2>Item master aliases</h2>
+          </div>
+          <div className="catalogue-actions">
+            <label className="secondary-button file-button">
+              <UploadCloud size={16} />
+              Upload CSV
+              <input accept=".csv,text/csv" type="file" onChange={handleCatalogueUpload} />
+            </label>
+            <button className="secondary-button" type="button" onClick={downloadCatalogueTemplate}>
+              <Download size={16} />
+              Template
+            </button>
           </div>
           <textarea
             value={itemMasterText}
