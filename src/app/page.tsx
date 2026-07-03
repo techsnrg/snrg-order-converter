@@ -5,7 +5,7 @@ import {
   Clipboard,
   Database,
   Download,
-  FileImage,
+  FileSpreadsheet,
   Loader2,
   PackageCheck,
   RefreshCcw,
@@ -64,14 +64,6 @@ const emptyRows: ConvertedLine[] = [];
 const catalogueHeaders = ["itemCode", "itemName", "aliases", "defaultUom", "conversionQty"];
 const catalogueCacheKey = "snrg-order-converter:item-catalogue:v1";
 
-function escapeCell(value: string | number) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
 function exportRows(rows: ConvertedLine[]) {
   const worksheetRows = rows.map((row, index) => ({
     idx: index + 1,
@@ -88,25 +80,17 @@ function exportRows(rows: ConvertedLine[]) {
   }));
 
   const headers = Object.keys(worksheetRows[0] || { item_code: "", qty: "" });
-  const htmlRows = [
-    `<tr>${headers.map((header) => `<th>${escapeCell(header)}</th>`).join("")}</tr>`,
-    ...worksheetRows.map(
-      (row) =>
-        `<tr>${headers
-          .map((header) => `<td>${escapeCell(row[header as keyof typeof row] ?? "")}</td>`)
-          .join("")}</tr>`
-    )
+  const csvRows = [
+    headers.map(escapeCsvCell).join(","),
+    ...worksheetRows.map((row) => headers.map((header) => escapeCsvCell(row[header as keyof typeof row] ?? "")).join(","))
   ];
-  const workbookHtml = `<!doctype html><html><head><meta charset="utf-8" /></head><body><table>${htmlRows.join(
-    ""
-  )}</table></body></html>`;
-  const blob = new Blob([workbookHtml], {
-    type: "application/vnd.ms-excel;charset=utf-8"
+  const blob = new Blob([csvRows.join("\n")], {
+    type: "text/csv;charset=utf-8"
   });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `quotation-items-${new Date().toISOString().slice(0, 10)}.xls`;
+  anchor.download = `quotation-items-${new Date().toISOString().slice(0, 10)}.csv`;
   anchor.click();
   URL.revokeObjectURL(url);
 }
@@ -205,7 +189,9 @@ function getCatalogueStats(value: string) {
 }
 
 function formatTimeLabel(value: Date) {
-  return value.toLocaleTimeString("en-IN", {
+  return value.toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
     hour: "2-digit",
     minute: "2-digit"
   });
@@ -242,17 +228,21 @@ async function copyColumn(values: Array<string | number>) {
   await navigator.clipboard.writeText(text);
 }
 
+function escapeCsvCell(value: string | number) {
+  const text = String(value ?? "");
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
 export default function Home() {
-  const [image, setImage] = useState<File | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string>("");
+  const [images, setImages] = useState<File[]>([]);
   const [itemMasterText, setItemMasterText] = useState(JSON.stringify(sampleItemMaster, null, 2));
   const [rows, setRows] = useState<ConvertedLine[]>(emptyRows);
   const [originalRows, setOriginalRows] = useState<ConvertedLine[]>(emptyRows);
   const [customerName, setCustomerName] = useState("");
   const [message, setMessage] = useState("");
+  const [toast, setToast] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isFinalizing, setIsFinalizing] = useState(false);
-  const [isFinalized, setIsFinalized] = useState(false);
   const [isSyncingItems, setIsSyncingItems] = useState(false);
   const [syncProgress, setSyncProgress] = useState("");
   const [syncPercent, setSyncPercent] = useState(0);
@@ -261,6 +251,15 @@ export default function Home() {
 
   const reviewCount = useMemo(() => rows.filter((row) => row.needsReview).length, [rows]);
   const catalogueStats = useMemo(() => getCatalogueStats(itemMasterText), [itemMasterText]);
+  const photoCountLabel =
+    images.length === 0 ? "No photos uploaded" : `${images.length} photo${images.length === 1 ? "" : "s"} uploaded`;
+
+  function showToast(value: string) {
+    setToast(value);
+    window.setTimeout(() => {
+      setToast((currentToast) => (currentToast === value ? "" : currentToast));
+    }, 2600);
+  }
 
   function restoreLocalCatalogueCache() {
     try {
@@ -309,13 +308,13 @@ export default function Home() {
   }, []);
 
   function handleImageChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0] || null;
-    setImage(file);
+    const files = Array.from(event.target.files || []);
+    setImages(files);
     setRows(emptyRows);
     setOriginalRows(emptyRows);
-    setIsFinalized(false);
+    setCustomerName("");
     setMessage("");
-    setPreviewUrl(file ? URL.createObjectURL(file) : "");
+    event.target.value = "";
   }
 
   async function handleCatalogueUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -422,7 +421,6 @@ export default function Home() {
   }
 
   function updateRow(index: number, patch: Partial<ConvertedLine>) {
-    setIsFinalized(false);
     setRows((currentRows) =>
       currentRows.map((row, rowIndex) =>
         rowIndex === index
@@ -453,7 +451,7 @@ export default function Home() {
         },
         body: JSON.stringify({
           customerName,
-          imageName: image?.name || "",
+          imageName: images.map((file) => file.name).join(", "),
           originalRows,
           correctedRows: rows
         })
@@ -462,7 +460,6 @@ export default function Home() {
 
       if (!response.ok) throw new Error(data.error || "Could not save correction history.");
 
-      setIsFinalized(true);
       setMessage(`Finalized ${data.saved || rows.length} rows. ${data.changed || 0} corrections saved for learning.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not save correction history.");
@@ -473,17 +470,19 @@ export default function Home() {
 
   async function copyItemCodes() {
     await copyColumn(rows.map((row) => row.itemCode));
+    showToast(`${rows.length} item codes copied`);
     setMessage(`${rows.length} item codes copied. Paste into ERPNext Item Code column.`);
   }
 
   async function copyQuantities() {
     await copyColumn(rows.map((row) => row.erpQty));
+    showToast(`${rows.length} quantities copied`);
     setMessage(`${rows.length} quantities copied. Paste into ERPNext Qty column.`);
   }
 
   async function convertOrder() {
-    if (!image) {
-      setMessage("Please upload an order image first.");
+    if (!images.length) {
+      setMessage("Please upload one or more order photos first.");
       return;
     }
 
@@ -496,27 +495,45 @@ export default function Home() {
     }
 
     setIsLoading(true);
+    setRows(emptyRows);
+    setOriginalRows(emptyRows);
+    setCustomerName("");
     setMessage("");
 
-    const formData = new FormData();
-    formData.append("image", image);
-    formData.append("itemMaster", JSON.stringify(itemMaster));
-
     try {
-      const response = await fetch("/api/extract", {
-        method: "POST",
-        body: formData
-      });
+      const extractedRows: ConvertedLine[] = [];
+      const originalExtractedRows: ConvertedLine[] = [];
+      const customerNames: string[] = [];
 
-      const data = (await response.json()) as ApiResponse;
-      if (!response.ok) throw new Error(data.error || "Could not convert the order.");
+      for (let index = 0; index < images.length; index += 1) {
+        const photo = images[index];
+        setMessage(`Converting photo ${index + 1} of ${images.length}: ${photo.name}`);
 
-      const nextRows = data.lines || [];
-      setRows(nextRows);
-      setOriginalRows(nextRows.map((row) => ({ ...row })));
-      setIsFinalized(false);
-      setCustomerName(data.customerName || "");
-      setMessage(data.warning || "Order converted. Review highlighted rows before exporting.");
+        const formData = new FormData();
+        formData.append("image", photo);
+        formData.append("itemMaster", JSON.stringify(itemMaster));
+
+        const response = await fetch("/api/extract", {
+          method: "POST",
+          body: formData
+        });
+
+        const data = (await response.json()) as ApiResponse;
+        if (!response.ok) throw new Error(data.error || `Could not convert ${photo.name}.`);
+
+        const nextRows = data.lines || [];
+        extractedRows.push(...nextRows);
+        originalExtractedRows.push(...nextRows.map((row) => ({ ...row })));
+
+        if (data.customerName && !customerNames.includes(data.customerName)) {
+          customerNames.push(data.customerName);
+        }
+      }
+
+      setRows(extractedRows);
+      setOriginalRows(originalExtractedRows);
+      setCustomerName(customerNames.join(", "));
+      setMessage(`${images.length} photo${images.length === 1 ? "" : "s"} converted. Review rows before exporting.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not convert the order.");
     } finally {
@@ -528,55 +545,47 @@ export default function Home() {
     <main className="app-shell">
       <section className="topbar">
         <div className="brand-lockup">
-          <div className="brand-mark">
-            <span>GC</span>
+          <div className="brand-mark" aria-hidden="true">
+            <img src="/gold-coast-logo.jpeg" alt="" width={66} height={66} />
           </div>
           <div>
             <p className="eyebrow">Gold Coast Electricals</p>
             <h1>Order Converter</h1>
           </div>
         </div>
-        <button
-          className="secondary-button"
-          type="button"
-          onClick={() => {
-            setRows(emptyRows);
-            setOriginalRows(emptyRows);
-            setIsFinalized(false);
-          }}
-        >
-          <RefreshCcw size={16} />
-          Reset
-        </button>
+        <div className="topbar-actions">
+          <div className="photo-actions">
+            <div className="photo-action-row">
+              <label className="secondary-button file-button compact-file-button">
+                <UploadCloud size={16} />
+                Upload Photos
+                <input accept="image/*" multiple type="file" onChange={handleImageChange} />
+              </label>
+              <button className="primary-button" type="button" onClick={convertOrder} disabled={isLoading || !images.length}>
+                {isLoading ? <Loader2 className="spin" size={16} /> : <UploadCloud size={16} />}
+                Convert
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => {
+                  setImages([]);
+                  setRows(emptyRows);
+                  setOriginalRows(emptyRows);
+                  setCustomerName("");
+                  setMessage("");
+                }}
+              >
+                <RefreshCcw size={16} />
+                Reset
+              </button>
+            </div>
+            <p className="photo-count">{photoCountLabel}</p>
+          </div>
+        </div>
       </section>
 
-      <section className="workspace">
-        <div className="panel upload-panel">
-          <div className="panel-title panel-title-split">
-            <div className="panel-heading-inline">
-              <FileImage size={18} />
-              <h2>Order photo</h2>
-            </div>
-            {image ? <span className="pill">{image.name}</span> : null}
-          </div>
-
-          <label className="dropzone">
-            <span className="upload-icon">
-              <UploadCloud size={30} />
-            </span>
-            <strong>{image ? "Photo ready" : "Upload order photo"}</strong>
-            <small>{image ? image.name : "JPG, PNG, or WhatsApp image"}</small>
-            <input accept="image/*" type="file" onChange={handleImageChange} />
-          </label>
-
-          {previewUrl ? <img className="preview" src={previewUrl} alt="Uploaded sales order" /> : null}
-
-          <button className="primary-button" type="button" onClick={convertOrder} disabled={isLoading}>
-            {isLoading ? <Loader2 className="spin" size={16} /> : <UploadCloud size={16} />}
-            Convert
-          </button>
-        </div>
-
+      <section className="catalogue-strip">
         <div className="panel catalogue-panel">
           <div className="compact-catalogue-head">
             <div>
@@ -587,9 +596,18 @@ export default function Home() {
           </div>
 
           <div className="catalogue-summary">
-            <span>{catalogueStats.uomReady.toLocaleString("en-IN")} UOM factors</span>
-            <span>{catalogueSource}</span>
-            <span>{catalogueUpdatedAt ? `Updated ${catalogueUpdatedAt}` : "Not synced"}</span>
+            <span>
+              <strong>{catalogueStats.uomReady.toLocaleString("en-IN")}</strong>
+              UOM factors
+            </span>
+            <span>
+              <strong>{catalogueSource}</strong>
+              Source
+            </span>
+            <span>
+              <strong>{catalogueUpdatedAt || "Pending"}</strong>
+              Updated
+            </span>
           </div>
 
           <div className="compact-catalogue-actions">
@@ -634,27 +652,40 @@ export default function Home() {
 
       <section className="results">
         <div className="results-head">
-          <div>
-            <p className="eyebrow">{customerName || "Quotation item rows"}</p>
-            <h2>{rows.length} rows extracted</h2>
+          <div className="results-title">
+            <span className="results-icon">
+              <FileSpreadsheet size={20} />
+            </span>
+            <div>
+              <p className="eyebrow">{customerName || "Quotation item rows"}</p>
+              <h2>{rows.length} rows extracted</h2>
+            </div>
           </div>
+          <label className="customer-field">
+            <span>Customer</span>
+            <input
+              value={customerName}
+              placeholder="Customer name from order"
+              onChange={(event) => setCustomerName(event.target.value)}
+            />
+          </label>
           <div className="actions">
             <span className={reviewCount ? "pill warn" : "pill"}>{reviewCount} need review</span>
             <button className="secondary-button" type="button" disabled={!rows.length || isFinalizing} onClick={finalizeRows}>
               {isFinalizing ? <Loader2 className="spin" size={16} /> : <Sparkles size={16} />}
               Finalize & Learn
             </button>
-            <button className="secondary-button" type="button" disabled={!isFinalized} onClick={copyItemCodes}>
+            <button className="secondary-button" type="button" disabled={!rows.length} onClick={copyItemCodes}>
               <Clipboard size={16} />
               Copy Item Codes
             </button>
-            <button className="secondary-button" type="button" disabled={!isFinalized} onClick={copyQuantities}>
+            <button className="secondary-button" type="button" disabled={!rows.length} onClick={copyQuantities}>
               <Clipboard size={16} />
               Copy Qty
             </button>
             <button className="primary-button" type="button" disabled={!rows.length} onClick={() => exportRows(rows)}>
               <Download size={16} />
-              Export Excel
+              Export CSV
             </button>
           </div>
         </div>
@@ -669,6 +700,7 @@ export default function Home() {
                 <th>ERP qty</th>
                 <th>UOM</th>
                 <th>Confidence</th>
+                <th>Notes</th>
                 <th>Review</th>
               </tr>
             </thead>
@@ -695,6 +727,9 @@ export default function Home() {
                     </td>
                     <td>{row.confidence}%</td>
                     <td>
+                      <input value={row.notes || ""} onChange={(event) => updateRow(index, { notes: event.target.value })} />
+                    </td>
+                    <td>
                       <label className="checkbox">
                         <input
                           type="checkbox"
@@ -708,8 +743,8 @@ export default function Home() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7} className="empty">
-                    Upload a handwritten order image to generate ERPNext-ready rows.
+                  <td colSpan={8} className="empty">
+                    Upload handwritten order photos to generate ERPNext-ready rows.
                   </td>
                 </tr>
               )}
@@ -717,6 +752,12 @@ export default function Home() {
           </table>
         </div>
       </section>
+
+      {toast ? (
+        <div className="toast" role="status" aria-live="polite">
+          {toast}
+        </div>
+      ) : null}
     </main>
   );
 }

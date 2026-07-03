@@ -95,6 +95,47 @@ function formatCorrectionExamples(examples: Awaited<ReturnType<typeof readRecent
   return `\n\nRecent coordinator corrections to learn from:\n${lines.join("\n")}`;
 }
 
+function normalizeCodeText(value: string) {
+  return value.toUpperCase().replace(/[^A-Z0-9]+/g, "");
+}
+
+function getAlphaCodePrefix(value: string) {
+  const compact = normalizeCodeText(value);
+  const match = compact.match(/^([A-Z]+)\d+$/);
+  return match?.[1] || "";
+}
+
+function getNumericSuffix(value: string) {
+  const match = value.match(/(\d{2,})\s*$/);
+  return match?.[1] || "";
+}
+
+function expandDittoShorthand(lines: ExtractedLine[]) {
+  let previousAlphaPrefix = "";
+
+  return lines.map((line) => {
+    const currentPrefix = getAlphaCodePrefix(line.itemHint);
+    if (currentPrefix) {
+      previousAlphaPrefix = currentPrefix;
+      return line;
+    }
+
+    const hasDittoSignal = /["'“”〃]/.test(line.itemHint) || /^\s*[un]\s*\d{2,}/i.test(line.itemHint);
+    const suffix = getNumericSuffix(line.itemHint);
+
+    if (!previousAlphaPrefix || !hasDittoSignal || !suffix) {
+      return line;
+    }
+
+    const expandedHint = `${previousAlphaPrefix}${suffix}`;
+    return {
+      ...line,
+      itemHint: expandedHint,
+      notes: [line.notes, `Expanded shorthand "${line.itemHint}" as ${expandedHint}`].filter(Boolean).join("; ")
+    };
+  });
+}
+
 function getOpenAIErrorResponse(error: unknown) {
   const status = typeof error === "object" && error && "status" in error ? Number(error.status) : 500;
   const code =
@@ -153,7 +194,9 @@ export async function POST(request: Request) {
               type: "input_text",
               text:
                 "Extract this handwritten sales order into structured rows. Preserve the written item shorthand. " +
-                "Read quantities and units carefully. If a row is unclear, still include it and explain uncertainty in notes." +
+                "Read quantities and units carefully. If a row is unclear, still include it and explain uncertainty in notes. " +
+                "When a salesperson uses ditto marks, forward quotes, repeated quote marks, or shorthand such as 'n 010' under a previous alphabetic item code like GCSP006, infer that the previous alphabetic prefix continues and the suffix changes, so 'n 010' means GCSP010. " +
+                "Keep the original visible row in handwrittenText, but put the fully inferred item shorthand in itemHint." +
                 formatCorrectionExamples(correctionExamples)
             },
             {
@@ -179,7 +222,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       customerName: parsed.customerName || "",
-      lines: matchLines(parsed.lines || [], itemMaster)
+      lines: matchLines(expandDittoShorthand(parsed.lines || []), itemMaster)
     });
   } catch (error) {
     return getOpenAIErrorResponse(error);
