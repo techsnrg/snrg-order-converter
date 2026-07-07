@@ -1,5 +1,5 @@
 import type { ConvertedLine } from "@/lib/types";
-import { getSupabaseHeaders, getSupabaseRestConfig } from "./catalogue-cache";
+import { isUpstashConfigured, upstashCommand, upstashPipeline } from "./client";
 
 export type CorrectionPayload = {
   customerName: string;
@@ -19,7 +19,30 @@ export type CorrectionExample = {
   extractedUom: string;
 };
 
-const tableName = "order_converter_corrections";
+type StoredCorrection = {
+  customer_name: string;
+  image_name: string;
+  row_index: number;
+  handwritten_text: string;
+  extracted_item_hint: string;
+  extracted_quantity: number;
+  extracted_unit: string;
+  extracted_item_code: string;
+  extracted_item_name: string;
+  extracted_erp_qty: number;
+  extracted_uom: string;
+  corrected_item_code: string;
+  corrected_item_name: string;
+  corrected_erp_qty: number;
+  corrected_uom: string;
+  confidence: number;
+  match_reason: string;
+  was_changed: boolean;
+  created_at: string;
+};
+
+const correctionsKey = "order_converter:corrections";
+const maxStoredCorrections = 500;
 
 function normalizeText(value: string) {
   return value.trim().replace(/\s+/g, " ");
@@ -38,10 +61,10 @@ function wasChanged(original: ConvertedLine | undefined, corrected: ConvertedLin
 }
 
 export async function saveCorrections(payload: CorrectionPayload) {
-  const config = getSupabaseRestConfig();
-  if (!config) return null;
+  if (!isUpstashConfigured()) return null;
 
-  const rows = payload.correctedRows.map((corrected, index) => {
+  const now = new Date().toISOString();
+  const rows: StoredCorrection[] = payload.correctedRows.map((corrected, index) => {
     const original = payload.originalRows[index];
 
     return {
@@ -62,22 +85,15 @@ export async function saveCorrections(payload: CorrectionPayload) {
       corrected_uom: corrected.uom || "",
       confidence: original?.confidence ?? corrected.confidence ?? 0,
       match_reason: original?.matchReason || corrected.matchReason || "",
-      was_changed: wasChanged(original, corrected)
+      was_changed: wasChanged(original, corrected),
+      created_at: now
     };
   });
 
-  const response = await fetch(`${config.url}/rest/v1/${tableName}`, {
-    method: "POST",
-    headers: {
-      ...getSupabaseHeaders(config.serviceRoleKey),
-      Prefer: "return=minimal"
-    },
-    body: JSON.stringify(rows)
-  });
-
-  if (!response.ok) {
-    throw new Error(`Could not save correction history: ${response.status}`);
-  }
+  await upstashPipeline([
+    ["LPUSH", correctionsKey, ...rows.map((row) => JSON.stringify(row))],
+    ["LTRIM", correctionsKey, 0, maxStoredCorrections - 1]
+  ]);
 
   return {
     saved: rows.length,
@@ -86,34 +102,22 @@ export async function saveCorrections(payload: CorrectionPayload) {
 }
 
 export async function readRecentCorrectionExamples(limit = 12): Promise<CorrectionExample[]> {
-  const config = getSupabaseRestConfig();
-  if (!config) return [];
-
-  const response = await fetch(
-    `${config.url}/rest/v1/${tableName}?was_changed=eq.true&select=handwritten_text,corrected_item_code,corrected_item_name,corrected_erp_qty,corrected_uom,extracted_item_code,extracted_erp_qty,extracted_uom&order=created_at.desc&limit=${limit}`,
-    {
-      headers: getSupabaseHeaders(config.serviceRoleKey),
-      cache: "no-store"
-    }
-  );
-
-  if (!response.ok) return [];
-
-  const rows = (await response.json()) as Array<{
-    handwritten_text: string;
-    corrected_item_code: string;
-    corrected_item_name: string;
-    corrected_erp_qty: number;
-    corrected_uom: string;
-    extracted_item_code: string;
-    extracted_erp_qty: number;
-    extracted_uom: string;
-  }>;
+  const rows = await upstashCommand<string[]>(["LRANGE", correctionsKey, 0, 99]);
+  if (!rows?.length) return [];
 
   const seen = new Set<string>();
   const examples: CorrectionExample[] = [];
 
-  for (const row of rows) {
+  for (const value of rows) {
+    let row: StoredCorrection;
+    try {
+      row = JSON.parse(value) as StoredCorrection;
+    } catch {
+      continue;
+    }
+
+    if (!row.was_changed) continue;
+
     const key = `${normalizeText(row.handwritten_text)}:${row.corrected_item_code}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -128,6 +132,8 @@ export async function readRecentCorrectionExamples(limit = 12): Promise<Correcti
       extractedErpQty: Number(row.extracted_erp_qty),
       extractedUom: row.extracted_uom
     });
+
+    if (examples.length >= limit) break;
   }
 
   return examples;

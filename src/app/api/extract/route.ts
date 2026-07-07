@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { sampleItemMaster } from "@/data/sample-item-master";
 import { matchLines } from "@/lib/matching";
-import { readRecentCorrectionExamples } from "@/lib/supabase/corrections";
+import { readRecentCorrectionExamples } from "@/lib/upstash/corrections";
 import type { ExtractedLine, ItemMasterRow } from "@/lib/types";
 
 export const runtime = "nodejs";

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { saveCorrections } from "@/lib/supabase/corrections";
+import { saveCorrections } from "@/lib/upstash/corrections";
 import type { ConvertedLine } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
     if (!result) {
       return NextResponse.json(
         {
-          error: "Supabase correction history is not configured."
+          error: "Upstash correction history is not configured."
         },
         { status: 503 }
       );

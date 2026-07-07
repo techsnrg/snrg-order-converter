@@ -340,7 +340,7 @@ export default function Home() {
       });
       try {
         await saveSharedCatalogueCache(catalogue, file.name);
-        setMessage(`${catalogue.length} catalogue items loaded from ${file.name} and saved to Supabase.`);
+        setMessage(`${catalogue.length} catalogue items loaded from ${file.name} and saved to shared storage.`);
       } catch (error) {
         setMessage(
           `${catalogue.length} catalogue items loaded locally. ${

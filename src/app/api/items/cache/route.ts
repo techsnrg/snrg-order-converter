@@ -3,7 +3,7 @@ import {
   isCatalogueCacheConfigured,
   readCatalogueCache,
   writeCatalogueCache
-} from "@/lib/supabase/catalogue-cache";
+} from "@/lib/upstash/catalogue-cache";
 import type { ItemMasterRow } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -44,7 +44,7 @@ export async function POST(request: Request) {
     if (!cache) {
       return NextResponse.json(
         {
-          error: "Supabase catalogue cache is not configured."
+          error: "Upstash catalogue cache is not configured."
         },
         { status: 503 }
       );

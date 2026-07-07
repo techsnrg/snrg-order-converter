@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetchErpNextItems } from "@/lib/erpnext/items";
-import { writeCatalogueCache } from "@/lib/supabase/catalogue-cache";
+import { writeCatalogueCache } from "@/lib/upstash/catalogue-cache";
 
 export const runtime = "nodejs";
 
@@ -17,15 +17,15 @@ export async function GET() {
         const result = await fetchErpNextItems((progress) => {
           send({ event: "progress", ...progress });
         });
-        let supabaseWarning = "";
+        let sharedStorageWarning = "";
 
         try {
           const cache = await writeCatalogueCache(result.items, "ERPNext");
           if (!cache) {
-            supabaseWarning = "Supabase catalogue cache is not configured.";
+            sharedStorageWarning = "Upstash catalogue cache is not configured.";
           }
         } catch (error) {
-          supabaseWarning = error instanceof Error ? error.message : "Could not save shared catalogue cache.";
+          sharedStorageWarning = error instanceof Error ? error.message : "Could not save shared catalogue cache.";
         }
 
         send({
@@ -33,7 +33,7 @@ export async function GET() {
           items: result.items,
           count: result.items.length,
           syncedAt: new Date().toISOString(),
-          warning: [result.warning, supabaseWarning].filter(Boolean).join(" "),
+          warning: [result.warning, sharedStorageWarning].filter(Boolean).join(" "),
           requiresCustomFieldSetup: result.requiresCustomFieldSetup
         });
       } catch (error) {
